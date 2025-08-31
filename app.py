@@ -10,7 +10,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import requests
-import io
+
+# Replace with your NewsAPI key
+NEWS_API_KEY = "57414e21c7184e9896c9962ada138951"
 
 def fetch_stock_data(ticker, strategy):
     stock = yf.Ticker(ticker)
@@ -30,18 +32,33 @@ def fetch_stock_data(ticker, strategy):
     return data
 
 def fetch_financial_news(ticker):
-    news = [
-        {"title": f"Stock of {ticker} Shows Promising Growth", "link": f"https://news.com/{ticker}_growth"},
-        {"title": f"{ticker} Faces Market Challenges", "link": f"https://news.com/{ticker}_challenges"},
-        {"title": f"{ticker} Innovates with New Products", "link": f"https://news.com/{ticker}_innovations"},
-        {"title": f"How {ticker} is Expanding Globally", "link": f"https://news.com/{ticker}_global_expansion"}
-    ]
-    return news
+    url = (
+        f"https://newsapi.org/v2/everything?"
+        f"q={ticker}&"
+        f"sortBy=publishedAt&"
+        f"language=en&"
+        f"apiKey={NEWS_API_KEY}"
+    )
+    response = requests.get(url)
+    articles = []
+    if response.status_code == 200:
+        data = response.json()
+        for article in data.get("articles", []):
+            articles.append({
+                "title": article["title"],
+                "link": article["url"]
+            })
+    return articles
 
-def analyze_sentiment_vader(news_text):
+def analyze_sentiment_vader(news_list):
     analyzer = SentimentIntensityAnalyzer()
-    sentiment = analyzer.polarity_scores(news_text)
-    return sentiment['compound']
+    if not news_list:
+        return 0  # Neutral if no news
+    scores = []
+    for news in news_list:
+        sentiment = analyzer.polarity_scores(news["title"])
+        scores.append(sentiment["compound"])
+    return np.mean(scores) if scores else 0
 
 def train_model(data):
     features = data[['Open', 'High', 'Low', 'Close', 'Volume']]
@@ -129,13 +146,18 @@ def generate_summary(ticker, sentiment_score, trend, decision, support, resistan
     """
     return summary
 
+def clean_ticker(ticker: str) -> str:
+    ticker = ticker.upper().replace("$", "").strip()
+    return ticker
+
 def main():
     st.set_page_config(layout="wide")
     st.title("AI Financial Advisor with Sentiment Analysis and Candlestick Charts")
 
-    ticker = st.text_input("Enter Stock Ticker (e.g., AAPL, TSLA): ").upper()
+    raw_ticker = st.text_input("Enter Stock Ticker (e.g., AAPL, TSLA): ")
+    if raw_ticker:
+        ticker = clean_ticker(raw_ticker)
 
-    if ticker:
         try:
             strategy = st.selectbox("Select Trading Strategy", ["Intraday", "Swing"])
 
@@ -156,7 +178,14 @@ def main():
 
             st.write("Fetching financial news...")
             news = fetch_financial_news(ticker)
-            sentiment_score = analyze_sentiment_vader(news[0]['title'])
+            if news:
+                st.write("Latest News Headlines:")
+                for n in news[:5]:
+                    st.markdown(f"- [{n['title']}]({n['link']})")
+            else:
+                st.write("No news found.")
+
+            sentiment_score = analyze_sentiment_vader(news)
             st.write(f"Sentiment Score for {ticker}: {sentiment_score:.2f}")
 
             sentiment_label = "Neutral"
@@ -197,6 +226,8 @@ def main():
 
         except ValueError as ve:
             st.error(f"ValueError: {ve}")
+            if strategy == "Intraday":
+                st.info("Intraday data may not be available for this ticker or at this time. Try switching to 'Swing' strategy or check if the market is open.")
         except Exception as e:
             st.error(f"An error occurred: {e}")
 
